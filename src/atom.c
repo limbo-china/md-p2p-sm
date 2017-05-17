@@ -14,6 +14,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <mpi.h>
+#include <string.h>
 
 // 初始化原子信息结构体
 void initAtoms(struct CellStr* cells, Atom** ato){
@@ -269,18 +270,16 @@ void adjustAtoms(struct SystemStr* sys, void * buf, MPI_Win *win){
         memcpy((char *)&recv1_t,getbuf1,sizeof(int));
         memcpy((char *)&recv1,getbuf1+sizeof(int),sizeof(int));
 
-        MPI_Win_shared_query(*win,pos_neighbor, &r2, &t2, &getbuf2);
+        MPI_Win_shared_query(*win,neighbor_POSI, &r2, &t2, &getbuf2);
         //printf("recv2 query success  r2:%d\n",r2);
         memcpy((char *)&recv2,getbuf2,sizeof(int));
-        
+
         // 处理接收到的原子数据，将原子分配至细胞中
         procRecvData(sys, getbuf1+2*sizeof(int)+recv1_t*sizeof(AtomData), recv1);
         procRecvData(sys, getbuf2+2*sizeof(int), recv2);
+        MPI_Win_fence(0,*win);
     }
      endTimer(communication);
-
-    // 通信结束，释放缓冲区
-    free(negSendBuf);free(posSendBuf);free(negRecvBuf);free(posRecvBuf);
 }
 
 // 将cell1中的第N个原子移动到cell2中
