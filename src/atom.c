@@ -197,7 +197,7 @@ void initTemperature(struct SystemStr* sys, struct ParameterStr* para){
 }
 
 // 调整原子所在细胞，并进行原子数据通信(去掉了序号排序)
-void adjustAtoms(struct SystemStr* sys){
+void adjustAtoms(struct SystemStr* sys, void * buf, MPI_Win *win){
 
     // 清空本空间外的细胞
     for (int i=sys->cells->myCellNum; i<sys->cells->totalCellNum; i++)
@@ -227,12 +227,15 @@ void adjustAtoms(struct SystemStr* sys){
     int direct_POSI, direct_NEGA;
     int neighbor_NEGA,neighbor_POSI;
 
-    // 4个缓冲区，正负轴上发送缓冲区和接收缓冲区
-    int bufsize = sys->datacomm->bufSize;
-    char* negSendBuf = malloc(bufsize);
-    char* posSendBuf = malloc(bufsize);
-    char* negRecvBuf = malloc(bufsize);
-    char* posRecvBuf = malloc(bufsize);
+    char* PutBuf = (char *)buf;
+    //char* negGetBuf = NULL;
+    //char* posGetBuf = NULL;
+   
+    MPI_Aint r1,r2;
+    int recv1,recv2,recv1_t;
+    int t1,t2;
+    char *getbuf1 = NULL;
+    char *getbuf2= NULL;
 
     beginTimer(communication);
     for(int direct = 0;direct<13;direct++){
@@ -242,42 +245,37 @@ void adjustAtoms(struct SystemStr* sys){
         neighbor_NEGA = sys->datacomm->neighborProc2[direct_NEGA];
         neighbor_POSI = sys->datacomm->neighborProc2[direct_POSI];
 
+        int negPutSize=0,posPutSize=0;
+
+        for (int i=0; i<sys->datacomm->commCellNum2[direct_NEGA]; i++)
+            negPutSize += sys->cells->atomNum[sys->datacomm->commCells2[direct_NEGA][i]];
+        for (int i=0; i<sys->datacomm->commCellNum2[direct_POSI]; i++)
+            posPutSize += sys->cells->atomNum[sys->datacomm->commCells2[direct_POSI][i]];
+
+        memcpy(PutBuf,&negPutSize,sizeof(int));
+        memcpy(PutBuf+sizeof(int),&posPutSize,sizeof(int));
+
         // 将数据加入发送缓冲区
-        int neg_send = addSendData2(sys, negSendBuf, direct_NEGA);
-        int pos_send = addSendData2(sys, posSendBuf, direct_POSI);
+        addSendData2(sys, PutBuf+2*sizeof(int), direct_NEGA);
+        addSendData2(sys, PutBuf+2*sizeof(int)+negPutSize*sizeof(AtomData), direct_POSI);
         //printf("addsend\n");
         // if (ifZeroRank())
         // {
         //     printf("%d %d %d %d\n",neg_send,pos_send,sizeof(AtomData),bufsize);
         // }
-
-        // 调用mpi_sendrecv函数，与邻居进程发送与接收原子数据
-        int neg_recv,pos_recv;
-
+        MPI_Win_fence(0,*win);
         
-        MPI_Status status1,status2;
-        //printf("rank %d direct %d sendto %d recvfrom %d: 1\n",getMyRank(),direct,neighbor_NEGA,neighbor_POSI);
-        MPI_Sendrecv(negSendBuf, neg_send*sizeof(AtomData), MPI_BYTE, neighbor_NEGA, 0,
-                posRecvBuf, bufsize, MPI_BYTE, neighbor_POSI, 0,
-                MPI_COMM_WORLD, &status1);
-        MPI_Get_count(&status1, MPI_BYTE, &pos_recv);
-        //printf("rank %d direct %d sendto %d recvfrom %d: 2\n",getMyRank(),direct,neighbor_NEGA,neighbor_POSI);
-        MPI_Sendrecv(posSendBuf, pos_send*sizeof(AtomData), MPI_BYTE, neighbor_POSI, 0,
-                negRecvBuf, bufsize, MPI_BYTE, neighbor_NEGA, 0,
-                MPI_COMM_WORLD, &status2);
-        MPI_Get_count(&status2, MPI_BYTE, &neg_recv);
-        //printf("rank %d direct %d sendto %d recvfrom %d: 3\n",getMyRank(),direct,neighbor_NEGA,neighbor_POSI);
-       
-        //printf("sendrecv\n");
+        MPI_Win_shared_query(*win,neighbor_NEGA, &r1, &t1, &getbuf1);
+        memcpy((char *)&recv1_t,getbuf1,sizeof(int));
+        memcpy((char *)&recv1,getbuf1+sizeof(int),sizeof(int));
 
-        // if (ifZeroRank())
-        // {
-        //     printf("pos_recv:%d neg_recv:%d\n",pos_recv,neg_recv);
-        // }
-
+        MPI_Win_shared_query(*win,pos_neighbor, &r2, &t2, &getbuf2);
+        //printf("recv2 query success  r2:%d\n",r2);
+        memcpy((char *)&recv2,getbuf2,sizeof(int));
+        
         // 处理接收到的原子数据，将原子分配至细胞中
-        procRecvData(sys, posRecvBuf, pos_recv/sizeof(AtomData));
-        procRecvData(sys, negRecvBuf, neg_recv/sizeof(AtomData));
+        procRecvData(sys, getbuf1+2*sizeof(int)+recv1_t*sizeof(AtomData), recv1);
+        procRecvData(sys, getbuf2+2*sizeof(int), recv2);
     }
      endTimer(communication);
 

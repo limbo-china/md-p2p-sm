@@ -38,6 +38,16 @@ int main(int argc, char** argv){
 	//sleep(5);
 	System* sys = initSystem(para);
 
+	char* PutBuf = NULL;
+	MPI_Win win;
+
+	//printf("size: %d\n",sys->datacomm->bufSize );
+	MPI_Win_allocate_shared(sys->datacomm->bufSize+2*sizeof(int), sizeof(char),
+          MPI_INFO_NULL,MPI_COMM_WORLD, &PutBuf, &win);
+
+	adjustAtoms(sys,PutBuf,&win);
+	computeForce(sys);
+
 	beginTimer(loop);
 	for(int i=1;i<=para->stepNums;i++){
     	updateMomenta(sys, para); 
@@ -45,7 +55,7 @@ int main(int argc, char** argv){
     	updatePosition(sys, para);
 
     	//beginTimer(adjustatom);
-    	adjustAtoms(sys);
+    	adjustAtoms(sys,PutBuf,&win);
     	//endTimer(adjustatom);
 
     	beginTimer(force);
